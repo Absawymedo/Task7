@@ -1,5 +1,5 @@
 pipeline {
-  any
+  agent any
   environment {
     AWS_CREDENTIALS = 'aws-creds'
     TAG_KEY = 'lifespan'
@@ -31,5 +31,6 @@ pipeline {
     }
   }
 }
+
 
 

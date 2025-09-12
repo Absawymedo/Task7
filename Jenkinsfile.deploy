@@ -1,13 +1,12 @@
-// Jenkinsfile.deploy
 pipeline {
-  agent { label 'linux && docker' } // agent with docker CLI
+  any
   parameters {
     string(name: 'EC2_IP', defaultValue: '', description: 'IP of ephemeral EC2')
   }
   environment {
-    DOCKERHUB_CREDS = credentials('dockerhub-creds') // Jenkins username/password pair
+    DOCKERHUB_CREDS = credentials('dockerhub-creds')
     SSH_KEY = 'ssh-ec2-key'
-    IMAGE_NAMESPACE = 'your-docker-namespace'       // change to your namespace
+    IMAGE_NAMESPACE = 'your-docker-namespace'
   }
   stages {
     stage('Checkout') { steps { checkout scm } }
@@ -73,3 +72,4 @@ pipeline {
     }
   }
 }
+

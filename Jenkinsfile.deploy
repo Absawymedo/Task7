@@ -1,5 +1,5 @@
 pipeline {
-  any
+  agent any
   parameters {
     string(name: 'EC2_IP', defaultValue: '', description: 'IP of ephemeral EC2')
   }
@@ -72,4 +72,5 @@ pipeline {
     }
   }
 }
+
 

@@ -1,12 +1,11 @@
-// Jenkinsfile.provision
 pipeline {
-  agent { label 'linux && terraform' } // Jenkins agent that has terraform, awscli, ansible installed
+  any
   environment {
     TF_WORKSPACE = "ci-ephemeral"
-    AWS_CREDENTIALS = 'aws-creds'        // Jenkins credential ID (AWS access key/secret)
-    SSH_KEY = 'ssh-ec2-key'              // Jenkins SSH private key credential ID
-    ANSIBLE_USER = 'ubuntu'              // EC2 remote user (change if using amazon-linux)
-    TF_VAR_key_name = ''                 // optionally set via Jenkins credentials / job parameter
+    AWS_CREDENTIALS = 'aws-creds'
+    SSH_KEY = 'ssh-ec2-key'
+    ANSIBLE_USER = 'ubuntu'
+    TF_VAR_key_name = ''
   }
   stages {
     stage('Checkout') {
@@ -78,4 +77,5 @@ pipeline {
     failure { echo "Provision failed." }
   }
 }
+
 

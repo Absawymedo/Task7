@@ -1,0 +1,41 @@
+// Jenkinsfile.cleanup
+pipeline {
+  agent { label 'linux && awscli' }
+  triggers {
+    // Set schedule in job config or here; recommended to set in job using:
+    // TZ=Africa/Cairo
+    // 0 0 * * *
+    // Some Jenkins doesn't support TZ= in pipeline trigger; configure in job GUI Build Periodically text
+  }
+  environment {
+    AWS_CREDENTIALS = 'aws-creds'
+    // Tag to look for
+    TAG_KEY = 'lifespan'
+    TAG_VALUE = 'ephemeral'
+  }
+  stages {
+    stage('Describe and Terminate') {
+      steps {
+        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: env.AWS_CREDENTIALS]]) {
+          sh '''
+            # ENV: Jenkins agent shell with awscli
+            set -e
+            echo "Finding instances with tag ${TAG_KEY}=${TAG_VALUE}..."
+            INST_IDS=$(aws ec2 describe-instances \
+              --filters "Name=tag:${TAG_KEY},Values=${TAG_VALUE}" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+              --query 'Reservations[].Instances[].InstanceId' --output text)
+
+            if [ -z "${INST_IDS}" ]; then
+              echo "No ephemeral instances found."
+              exit 0
+            fi
+
+            echo "Instances to terminate: ${INST_IDS}"
+            aws ec2 terminate-instances --instance-ids ${INST_IDS}
+            echo "Termination requested. Logging terminated IDs."
+          '''
+        }
+      }
+    }
+  }
+}

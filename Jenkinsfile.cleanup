@@ -1,6 +1,6 @@
 // Jenkinsfile.cleanup
 pipeline {
-  agent { label 'linux && awscli' }
+  any
   triggers {
     // Set schedule in job config or here; recommended to set in job using:
     // TZ=Africa/Cairo
@@ -39,3 +39,4 @@ pipeline {
     }
   }
 }
+

@@ -1,0 +1,83 @@
+// Jenkinsfile.provision
+pipeline {
+  agent { label 'linux && terraform' } // Jenkins agent that has terraform, awscli, ansible installed
+  environment {
+    TF_WORKSPACE = "ci-ephemeral"
+    AWS_CREDENTIALS = 'aws-creds'        // Jenkins credential ID (AWS access key/secret)
+    SSH_KEY = 'ssh-ec2-key'              // Jenkins SSH private key credential ID
+    ANSIBLE_USER = 'ubuntu'              // EC2 remote user (change if using amazon-linux)
+    TF_VAR_key_name = ''                 // optionally set via Jenkins credentials / job parameter
+  }
+  triggers { 
+    // webhook triggers are set in job config (GitHub/GitLab webhook)
+  }
+  stages {
+    stage('Checkout') {
+      steps { checkout scm }
+    }
+
+    stage('Terraform Init & Apply') {
+      steps {
+        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: env.AWS_CREDENTIALS]]) {
+          dir('terraform') {
+            sh '''
+              # ENV: Jenkins agent shell (Linux)
+              terraform init -input=false -reconfigure
+              terraform validate
+              terraform plan -out=tfplan -input=false -var="key_name=${TF_VAR_key_name}"
+              terraform apply -input=false -auto-approve tfplan
+              terraform output -json > ../terraform_output.json
+            '''
+          }
+        }
+      }
+    }
+
+    stage('Fetch IP & Wait') {
+      steps {
+        // runs on Jenkins agent shell
+        sh '''
+          # read public ip from terraform output
+          EC2_IP=$(jq -r '.public_ip.value' terraform_output.json)
+          echo "EC2_IP=${EC2_IP}" > ec2.env
+          # small wait for SSH to be ready (ansible will handle retries)
+        '''
+        archiveArtifacts artifacts: 'ec2.env', fingerprint: true
+      }
+    }
+
+    stage('Ansible: install Docker') {
+      steps {
+        withCredentials([sshUserPrivateKey(credentialsId: env.SSH_KEY, keyFileVariable: 'SSH_KEYFILE')]) {
+          // We generate a temporary inventory file and call ansible-playbook
+          sh '''
+            # ENV: Jenkins agent shell with ansible installed
+            source ec2.env
+            cat > inventory.ini <<EOF
+            [ephemeral]
+            ${EC2_IP} ansible_user=${ANSIBLE_USER} ansible_ssh_private_key_file=${SSH_KEYFILE} ansible_python_interpreter=/usr/bin/python3
+            EOF
+
+            ansible-playbook -i inventory.ini ansible/playbook.yml --ssh-extra-args="-o StrictHostKeyChecking=no"
+          '''
+        }
+      }
+    }
+
+    stage('Trigger Deploy Job') {
+      steps {
+        script {
+          // read ip and trigger the deploy job, passing EC2_IP param
+          def ec2ip = readFile('ec2.env').trim().split('=')[1]
+          // Trigger Pipeline 2 (assumes a parameterized Jenkins job 'deploy-job' exists)
+          build job: 'deploy-job', parameters: [string(name: 'EC2_IP', value: ec2ip)], wait: false
+        }
+      }
+    }
+  }
+
+  post {
+    success { echo "Provision pipeline finished." }
+    failure { echo "Provision failed." }
+  }
+}

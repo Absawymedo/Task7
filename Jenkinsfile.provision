@@ -8,9 +8,6 @@ pipeline {
     ANSIBLE_USER = 'ubuntu'              // EC2 remote user (change if using amazon-linux)
     TF_VAR_key_name = ''                 // optionally set via Jenkins credentials / job parameter
   }
-  triggers { 
-    // webhook triggers are set in job config (GitHub/GitLab webhook)
-  }
   stages {
     stage('Checkout') {
       steps { checkout scm }
@@ -81,3 +78,4 @@ pipeline {
     failure { echo "Provision failed." }
   }
 }
+

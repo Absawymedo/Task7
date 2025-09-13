@@ -1,36 +1,51 @@
 pipeline {
-  agent any
-  environment {
-    AWS_CREDENTIALS = 'aws-creds'
-    TAG_KEY = 'lifespan'
-    TAG_VALUE = 'ephemeral'
-  }
-  stages {
-    stage('Describe and Terminate') {
-      steps {
-        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: env.AWS_CREDENTIALS]]) {
-          sh '''
-            # ENV: Jenkins agent shell with awscli
-            set -e
-            echo "Finding instances with tag ${TAG_KEY}=${TAG_VALUE}..."
-            INST_IDS=$(aws ec2 describe-instances \
-              --filters "Name=tag:${TAG_KEY},Values=${TAG_VALUE}" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
-              --query 'Reservations[].Instances[].InstanceId' --output text)
+    agent any
 
-            if [ -z "${INST_IDS}" ]; then
-              echo "No ephemeral instances found."
-              exit 0
-            fi
-
-            echo "Instances to terminate: ${INST_IDS}"
-            aws ec2 terminate-instances --instance-ids ${INST_IDS}
-            echo "Termination requested. Logging terminated IDs."
-          '''
-        }
-      }
+    parameters {
+        string(name: 'EC2_IP', defaultValue: '', description: 'Public IP of EC2')
     }
-  }
+
+    environment {
+        DOCKER_CREDS = credentials('dockerhub-jenkins')   // Jenkins DockerHub credentials ID
+        SSH_KEY      = credentials('ec2-ssh-key')
+        DOCKER_NS    = "mydockerhubuser"   // replace with your namespace
+    }
+
+    stages {
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    sh '''
+                      echo "Build number: $BUILD_NUMBER, Timestamp: $(date)" > index.html
+                      cat > Dockerfile <<EOF
+                      FROM nginx:alpine
+                      COPY index.html /usr/share/nginx/html/index.html
+                      EOF
+                      docker build -t $DOCKER_NS/nginx-ci:$BUILD_NUMBER .
+                    '''
+                }
+            }
+        }
+
+        stage('Push to Docker Hub') {
+            steps {
+                sh '''
+                  echo $DOCKER_CREDS_PSW | docker login -u $DOCKER_CREDS_USR --password-stdin
+                  docker push $DOCKER_NS/nginx-ci:$BUILD_NUMBER
+                '''
+            }
+        }
+
+        stage('Deploy on EC2') {
+            steps {
+                sh '''
+                  ssh -i $SSH_KEY -o StrictHostKeyChecking=no ubuntu@$EC2_IP "
+                    docker rm -f web || true
+                    docker run -d --name web -p 80:80 $DOCKER_NS/nginx-ci:$BUILD_NUMBER
+                    curl -s http://localhost | grep Build || true
+                  "
+                '''
+            }
+        }
+    }
 }
-
-
-

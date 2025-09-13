@@ -6,9 +6,9 @@ pipeline {
     }
 
     environment {
-        DOCKER_CREDS = credentials('dockerhub-jenkins')   // Jenkins DockerHub credentials ID
+        DOCKER_CREDS = credentials('dockerhub')
         SSH_KEY      = credentials('ec2-ssh-key')
-        DOCKER_NS    = "mydockerhubuser"   // replace with your namespace
+        DOCKER_NS    = "absawymedo"
     }
 
     stages {
@@ -49,3 +49,4 @@ pipeline {
         }
     }
 }
+

@@ -14,7 +14,7 @@ pipeline {
 
     stage('Terraform Init & Apply') {
       steps {
-        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: env.AWS_CREDENTIALS]]) {
+        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: env.aws-creds]]) {
           dir('terraform') {
             sh '''
               # ENV: Jenkins agent shell (Linux)
@@ -77,6 +77,7 @@ pipeline {
     failure { echo "Provision failed." }
   }
 }
+
 
 
 

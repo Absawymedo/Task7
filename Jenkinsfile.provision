@@ -1,83 +1,64 @@
-pipeline {
-  agent any
-  environment {
-    TF_WORKSPACE = "ci-ephemeral"
-    AWS_CREDENTIALS = 'aws-creds'
-    SSH_KEY = 'ssh-ec2-key'
-    ANSIBLE_USER = 'ubuntu'
-    TF_VAR_key_name = ''
-  }
-  stages {
-    stage('Checkout') {
-      steps { checkout scm }
+pipeline {pipeline {
+    agent any
+
+    environment {
+        AWS_CREDS = credentials('aws-jenkins')   // Jenkins AWS credentials ID
+        SSH_KEY   = credentials('ec2-ssh-key')   // Jenkins SSH key ID (private key)
     }
 
-    stage('Terraform Init & Apply') {
-      steps {
-        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: env.aws-creds]]) {
-          dir('terraform') {
-            sh '''
-              # ENV: Jenkins agent shell (Linux)
-              terraform init -input=false -reconfigure
-              terraform validate
-              terraform plan -out=tfplan -input=false -var="key_name=${TF_VAR_key_name}"
-              terraform apply -input=false -auto-approve tfplan
-              terraform output -json > ../terraform_output.json
-            '''
-          }
+    triggers {
+        githubPush()   // webhook push to main branch
+    }
+
+    stages {
+        stage('Terraform Init') {
+            steps {
+                sh '''
+                  export AWS_ACCESS_KEY_ID=$AWS_CREDS_USR
+                  export AWS_SECRET_ACCESS_KEY=$AWS_CREDS_PSW
+                  cd terraform
+                  terraform init -backend-config="bucket=my-tf-state-bucket" -backend-config="key=ci/terraform.tfstate" -backend-config="region=us-east-1"
+                '''
+            }
         }
-      }
-    }
 
-    stage('Fetch IP & Wait') {
-      steps {
-        // runs on Jenkins agent shell
-        sh '''
-          # read public ip from terraform output
-          EC2_IP=$(jq -r '.public_ip.value' terraform_output.json)
-          echo "EC2_IP=${EC2_IP}" > ec2.env
-          # small wait for SSH to be ready (ansible will handle retries)
-        '''
-        archiveArtifacts artifacts: 'ec2.env', fingerprint: true
-      }
-    }
-
-    stage('Ansible: install Docker') {
-      steps {
-        withCredentials([sshUserPrivateKey(credentialsId: env.SSH_KEY, keyFileVariable: 'SSH_KEYFILE')]) {
-          // We generate a temporary inventory file and call ansible-playbook
-          sh '''
-            # ENV: Jenkins agent shell with ansible installed
-            source ec2.env
-            cat > inventory.ini <<EOF
-            [ephemeral]
-            ${EC2_IP} ansible_user=${ANSIBLE_USER} ansible_ssh_private_key_file=${SSH_KEYFILE} ansible_python_interpreter=/usr/bin/python3
-            EOF
-
-            ansible-playbook -i inventory.ini ansible/playbook.yml --ssh-extra-args="-o StrictHostKeyChecking=no"
-          '''
+        stage('Terraform Apply') {
+            steps {
+                sh '''
+                  export AWS_ACCESS_KEY_ID=$AWS_CREDS_USR
+                  export AWS_SECRET_ACCESS_KEY=$AWS_CREDS_PSW
+                  cd terraform
+                  terraform apply -auto-approve
+                '''
+            }
         }
-      }
-    }
 
-    stage('Trigger Deploy Job') {
-      steps {
-        script {
-          // read ip and trigger the deploy job, passing EC2_IP param
-          def ec2ip = readFile('ec2.env').trim().split('=')[1]
-          // Trigger Pipeline 2 (assumes a parameterized Jenkins job 'deploy-job' exists)
-          build job: 'deploy-job', parameters: [string(name: 'EC2_IP', value: ec2ip)], wait: false
+        stage('Get EC2 Public IP') {
+            steps {
+                script {
+                    env.EC2_IP = sh(
+                        script: "cd terraform && terraform output -raw public_ip",
+                        returnStdout: true
+                    ).trim()
+                }
+            }
         }
-      }
-    }
-  }
 
-  post {
-    success { echo "Provision pipeline finished." }
-    failure { echo "Provision failed." }
-  }
+        stage('Configure with Ansible') {
+            steps {
+                sh '''
+                  cd ansible
+                  echo "[ec2]" > inventory
+                  echo "$EC2_IP ansible_user=ubuntu ansible_ssh_private_key_file=$SSH_KEY" >> inventory
+                  ansible-playbook -i inventory playbook.yml
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            build job: 'DeployPipeline', parameters: [string(name: 'EC2_IP', value: env.EC2_IP)]
+        }
+    }
 }
-
-
-
-

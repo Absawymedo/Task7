@@ -1,76 +1,51 @@
 pipeline {
-  agent any
-  parameters {
-    string(name: 'EC2_IP', defaultValue: '', description: 'IP of ephemeral EC2')
-  }
-  environment {
-    DOCKERHUB_CREDS = credentials('dockerhub-creds')
-    SSH_KEY = 'ssh-ec2-key'
-    IMAGE_NAMESPACE = 'your-docker-namespace'
-  }
-  stages {
-    stage('Checkout') { steps { checkout scm } }
+    agent any
 
-    stage('Build Docker image') {
-      steps {
-        script {
-          def tag = "${IMAGE_NAMESPACE}/nginx-ci:${env.BUILD_NUMBER}"
-          sh """
-            # ENV: Jenkins agent shell (docker)
-            mkdir -p docker_build && cp -r docker/* docker_build/
-            cd docker_build
-            echo "BUILD_NUMBER=${BUILD_NUMBER} - $(date -u +%Y-%m-%dT%H:%M:%SZ)" > build_info.txt
-            docker build -t ${tag} .
-            docker tag ${tag} ${tag}
-          """
-          env.IMAGE_TAG = tag
+    parameters {
+        string(name: 'EC2_IP', defaultValue: '', description: 'Public IP of EC2')
+    }
+
+    environment {
+        DOCKER_CREDS = credentials('dockerhub-jenkins')   // Jenkins DockerHub credentials ID
+        SSH_KEY      = credentials('ec2-ssh-key')
+        DOCKER_NS    = "mydockerhubuser"   // replace with your namespace
+    }
+
+    stages {
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    sh '''
+                      echo "Build number: $BUILD_NUMBER, Timestamp: $(date)" > index.html
+                      cat > Dockerfile <<EOF
+                      FROM nginx:alpine
+                      COPY index.html /usr/share/nginx/html/index.html
+                      EOF
+                      docker build -t $DOCKER_NS/nginx-ci:$BUILD_NUMBER .
+                    '''
+                }
+            }
         }
-      }
-    }
 
-    stage('Docker login & Push') {
-      steps {
-        sh """
-          # ENV: Jenkins agent shell (docker)
-          echo "${DOCKERHUB_CREDS_PSW}" | docker login --username "${DOCKERHUB_CREDS_USR}" --password-stdin
-          docker push ${env.IMAGE_TAG}
-        """
-      }
-    }
-
-    stage('SSH Deploy to EC2') {
-      steps {
-        withCredentials([sshUserPrivateKey(credentialsId: env.SSH_KEY, keyFileVariable: 'SSH_KEYFILE')]) {
-          sh '''
-            # ENV: Jenkins agent shell
-            EC2_IP=${EC2_IP}
-            IMAGE=${IMAGE_TAG}
-            ssh -o StrictHostKeyChecking=no -i ${SSH_KEYFILE} ubuntu@${EC2_IP} <<'SSH_EOF'
-              set -e
-              # pull new image
-              docker pull ${IMAGE}
-              # stop and remove old container
-              docker rm -f web || true
-              # run container
-              docker run -d --name web -p 80:80 --restart unless-stopped ${IMAGE}
-              # verify
-              sleep 2
-              curl -sS http://127.0.0.1/ || true
-            SSH_EOF
-          '''
+        stage('Push to Docker Hub') {
+            steps {
+                sh '''
+                  echo $DOCKER_CREDS_PSW | docker login -u $DOCKER_CREDS_USR --password-stdin
+                  docker push $DOCKER_NS/nginx-ci:$BUILD_NUMBER
+                '''
+            }
         }
-      }
-    }
 
-    stage('Verify remote') {
-      steps {
-        sh '''
-          # ENV: Jenkins agent shell
-          curl -sS http://${params.EC2_IP}/ | head -n 20
-        '''
-      }
+        stage('Deploy on EC2') {
+            steps {
+                sh '''
+                  ssh -i $SSH_KEY -o StrictHostKeyChecking=no ubuntu@$EC2_IP "
+                    docker rm -f web || true
+                    docker run -d --name web -p 80:80 $DOCKER_NS/nginx-ci:$BUILD_NUMBER
+                    curl -s http://localhost | grep Build || true
+                  "
+                '''
+            }
+        }
     }
-  }
 }
-
-

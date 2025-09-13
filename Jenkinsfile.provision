@@ -1,5 +1,11 @@
 pipeline {
-    agent any
+    agent {
+        docker {
+            image 'hashicorp/terraform:1.6.6'   // Terraform official image
+            args '-u root:root'                 // allow installing packages
+        }
+    }
+
 
     environment {
         AWS_CREDS = credentials('aws-creds')   // Jenkins AWS credentials ID
@@ -9,6 +15,19 @@ pipeline {
     triggers {
         githubPush()   // webhook push to main branch
     }
+
+    stages {
+        stage('Install Dependencies') {
+            steps {
+                sh '''
+                  apk add --no-cache python3 py3-pip openssh curl
+                  pip3 install ansible boto3 botocore
+                  aws --version
+                  terraform --version
+                  ansible --version
+                '''
+            }
+        }
 
     stages {
         stage('Terraform Init') {
@@ -62,4 +81,5 @@ pipeline {
         }
     }
 }
+
 

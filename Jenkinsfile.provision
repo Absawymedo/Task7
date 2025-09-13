@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        AWS_CREDS = credentials('aws-jenkins')   // Jenkins AWS credentials ID
+        AWS_CREDS = credentials('aws-creds')   // Jenkins AWS credentials ID
         SSH_KEY   = credentials('ec2-ssh-key')   // Jenkins SSH key ID (private key)
     }
 
@@ -62,3 +62,4 @@ pipeline {
         }
     }
 }
+
